@@ -1,16 +1,19 @@
 package com.belax.generator
 
-import com.belax.annotation.Single
 import com.belax.annotation.VMState
 import com.google.auto.service.AutoService
 import com.squareup.kotlinpoet.*
 import java.io.File
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import me.eugeniomarletti.kotlin.metadata.*
+import me.eugeniomarletti.kotlin.metadata.shadow.metadata.ProtoBuf
+import me.eugeniomarletti.kotlin.metadata.shadow.metadata.deserialization.NameResolver
+import me.eugeniomarletti.kotlin.metadata.shadow.name.Name
 import me.eugeniomarletti.kotlin.metadata.shadow.serialization.deserialization.getName
 import java.util.*
 import javax.annotation.processing.*
 import javax.lang.model.SourceVersion
+import javax.lang.model.element.Element
 import javax.lang.model.element.ElementKind
 import javax.lang.model.element.TypeElement
 import javax.tools.Diagnostic
@@ -30,37 +33,79 @@ class Generator : AbstractProcessor() {
 
     }
 
+    private fun ClassName.setNullable(value: Boolean) = if (value) asNullable() else asNonNullable()
+    private fun TypeName.setNullable(value: Boolean) = if (value) asNullable() else asNonNullable()
+
+    private fun toClassName(name: Name, isNullable: Boolean): ClassName {
+        return ClassName.bestGuess(name.toString().replace('/', '.')).setNullable(isNullable)
+    }
+
+    private fun getProperty(type: ProtoBuf.Type, nameResolver: NameResolver): TypeName {
+        val name = nameResolver.getName(type.className)
+        val className = toClassName(name, type.nullable)
+        val arguments = mutableListOf<TypeName>()
+        type.argumentList.forEach {
+            arguments.add(getProperty(it.type, nameResolver))
+        }
+        return if (arguments.size > 0) {
+            className.parameterizedBy(*arguments.toTypedArray()).setNullable(className.nullable)
+        } else className
+    }
+
+    class Property(val name: String, val type: TypeName)
+
+    private fun buildObservableInterface(properties: List<Property>, fileName: String, element: Element) {
+        val outInterface = TypeSpec.interfaceBuilder(fileName)
+        properties.forEach { property ->
+            val func = FunSpec.builder("${property.name}Changes")
+                    .addModifiers(KModifier.ABSTRACT)
+                    .returns(ClassName("io.reactivex", "Observable")
+                            .parameterizedBy(property.type))
+                    .build()
+            outInterface.addFunction(func)
+        }
+
+        val outInterfaceFile = FileSpec.builder(processingEnv.elementUtils.getPackageOf(element).toString(), fileName)
+                .addType(outInterface.build()).build()
+        outInterfaceFile.writeTo(File(processingEnv.options["kapt.kotlin.generated"]))
+    }
+
     override fun process(p0: MutableSet<out TypeElement>, p1: RoundEnvironment): Boolean {
-        p1.getElementsAnnotatedWith(VMState::class.java).filter { it.kind == ElementKind.CLASS }.forEach {
-            val className = it.simpleName
-            val outInterfaceFileName = "Generated_${className}Observable"
+        p1.getElementsAnnotatedWith(VMState::class.java).filter { it.kind == ElementKind.CLASS }.forEach { classElement ->
+            val className = classElement.simpleName
+            val outInterfaceFileName = "${className}Observable"
             val delegateName = "${className}Delegate"
-            val outInterface = TypeSpec.interfaceBuilder(outInterfaceFileName)
 
-            val properties = mutableListOf<PropertySpec>()
 
-            val classData = (it.kotlinMetadata as KotlinClassMetadata).data
+            val classData = (classElement.kotlinMetadata as KotlinClassMetadata).data
             val proto = classData.proto
             val nameResolver = classData.nameResolver
-
-
-
             val constr = proto.constructorList.find { it.isPrimary }!!
 
+            val observableTypes = mutableListOf<TypeName>()
+            val observableNames = mutableListOf<String>()
+            val properties = mutableListOf<Property>()
 
-
-
-            it.enclosedElements.filter { it.kind.isField }.forEachIndexed { index, element ->
+            classElement.enclosedElements.filter { it.kind.isField }.forEachIndexed { index, element ->
 
                 val param = constr.valueParameterList[index]
                 val name = nameResolver.getName(param.name)
                 val arguments = param.type.argumentList
                 val instance = param.defaultInstanceForType
 
-                log(" ----> ${name} = ${nameResolver.getName(param.type.className)}<${arguments.joinToString { nameResolver.getName(it.type.className).toString() }}> -----> " +
-                        " = ${nameResolver.getName(instance.name)}")
+                val propertyType = getProperty(param.type, nameResolver)
+                //log("propertyType = ${propertyType.toString()}")
+                val observableType = ClassName("com.belax.annotation",  "Event")
+                        .parameterizedBy(propertyType)
+
+                properties.add(Property(name.toString(), observableType))
+
+
+                /*log(" ----> ${name} = ${nameResolver.getName(param.type.className)}<${arguments.joinToString { nameResolver.getName(it.type.className).toString() }}> -----> " +
+                        " = ${nameResolver.getName(instance.name)}")*/
 
             }
+                buildObservableInterface(properties, outInterfaceFileName, classElement)
 
             /*it.enclosedElements.filter { it.kind.isField }.forEach {
                 val fieldClassName = it.asType().asTypeName().toString()

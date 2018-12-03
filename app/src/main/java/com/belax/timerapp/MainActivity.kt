@@ -21,9 +21,9 @@ class MainActivity : AppCompatActivity() {
 
 @VMState
 data class Example(
-        @Single val stringState: Map<String, Int> = mapOf("1" to 1),
-        val longState: MutableSet<Int>?,
-        val longStat2e: Int
+        @Single val stringState: String?,
+        val longState: MutableSet<Int?>? = null,
+        val longStat2e: Pair<List<Set<Int>?>, Float?>? = null
 )
 
 
@@ -32,13 +32,14 @@ interface A1 {
 }
 
 
-abstract class A() : Generated_ExampleObservable {
+abstract class A() : ExampleObservable {
     init {
         //BehaviorSubject.createDefault<java.util.Set<Integer>?>(null)
     }
 }
 
 
+/*
 interface ExampleObservable {
     fun stringStateObservable(): List<String>
-}
+}*/
