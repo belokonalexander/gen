@@ -21,9 +21,14 @@ class MainActivity : AppCompatActivity() {
 
 @VMState
 data class Example(
-        @Single val stringState: String?,
+        @Single val stringState: String? = null,
         val longState: MutableSet<Int?>? = null,
         val longStat2e: Pair<List<Set<Int>?>, Float?>? = null
+)
+
+@VMState
+data class Tokens(
+    val name: String = "Value"
 )
 
 
