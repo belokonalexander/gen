@@ -18,3 +18,4 @@ class SingleEvent<T>(item: T) : SimpleEvent<T>(item) {
         return super.get()
     }
 }
+

@@ -1,7 +1,6 @@
 package com.belax.timerapp
 
 import android.os.Bundle
-import android.os.Parcelable
 import android.widget.Toast
 import android.widget.Toast.LENGTH_SHORT
 import androidx.appcompat.app.AppCompatActivity

@@ -1,4 +1,4 @@
-package com.belax.generator
+package com.belax.compiler
 
 import com.belax.annotation.Config
 import com.belax.annotation.VMState
@@ -7,6 +7,8 @@ import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import me.eugeniomarletti.kotlin.metadata.KotlinClassMetadata
 import me.eugeniomarletti.kotlin.metadata.isPrimary
+import me.eugeniomarletti.kotlin.metadata.jvm.internalName
+import me.eugeniomarletti.kotlin.metadata.kotlinMetadata
 import me.eugeniomarletti.kotlin.metadata.proto
 import me.eugeniomarletti.kotlin.metadata.shadow.metadata.ProtoBuf
 import me.eugeniomarletti.kotlin.metadata.shadow.metadata.deserialization.NameResolver
@@ -19,7 +21,6 @@ import javax.lang.model.element.Element
 import javax.lang.model.element.ElementKind
 import javax.lang.model.element.TypeElement
 import javax.tools.Diagnostic
-
 
 @AutoService(Processor::class)
 class Generator : AbstractProcessor() {
@@ -80,7 +81,7 @@ class Generator : AbstractProcessor() {
 
     private fun getEventClassName(isSingle: Boolean): TypeName = ClassName(
             "com.belax.annotation", if (isSingle) "SingleEvent" else "SimpleEvent"
-            )
+    )
 
     private fun buildDelegate(element: Element, properties: List<Property>, outInterface: TypeSpec, name: String): TypeSpec {
         val defaultName = "default"

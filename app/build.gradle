@@ -3,8 +3,6 @@ apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-android-extensions'
 apply plugin: 'kotlin-kapt'
 
-
-
 android {
     compileSdkVersion 28
     defaultConfig {
@@ -43,8 +41,8 @@ dependencies {
     androidTestImplementation 'com.android.support.test:runner:1.0.2'
     androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2'
     implementation "io.reactivex.rxjava2:rxjava:2.2.2"
-    kapt project(":generator")
+    kapt project(":compiler")
     implementation project(path: ':annotation')
     testImplementation 'com.squareup:kotlinpoet:1.0.0-RC1'
-    testCompile project(path: ':generator')
+    testCompile project(path: ':compiler')
 }
