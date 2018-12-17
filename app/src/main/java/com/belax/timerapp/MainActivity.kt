@@ -1,6 +1,8 @@
 package com.belax.timerapp
 
 import android.os.Bundle
+import android.os.Parcelable
+import android.util.Log
 import android.widget.Toast
 import android.widget.Toast.LENGTH_SHORT
 import androidx.appcompat.app.AppCompatActivity
@@ -11,6 +13,7 @@ import com.belax.annotation.Config
 import com.belax.annotation.VMState
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
+import kotlinx.android.parcel.Parcelize
 import kotlinx.android.synthetic.main.activity_main.*
 
 
@@ -25,9 +28,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         val vmFactory = ViewModelFactory(savedInstanceState)
+        Log.d("1020", " 0---> ${savedInstanceState?.toString()}")
         viewModel = ViewModelProviders.of(this, vmFactory).get(MainViewModel::class.java)
 
-        viewModel.nameChanges().subscribe { event -> event.get()?.let { textMain.text = it } }
+        viewModel.nameChanges().subscribe { event -> event.get().let { textMain.text = it } }
                 .to(composite)
         viewModel.toastChanges().subscribe { event -> event.get()?.let { Toast.makeText(this, it, LENGTH_SHORT).show() }}
                 .to(composite)
@@ -40,6 +44,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle?) {
         super.onSaveInstanceState(outState)
+        Log.d("1020", " 1---> ${outState?.toString()}")
+        viewModel.onSaveInstanceState(outState)
+        Log.d("1020", " 10 ---> ${outState?.getParcelable("MAINSTATE_BUNDLE_KEY") as? Parcelable}")
     }
 
     override fun onDestroy() {
@@ -50,17 +57,18 @@ class MainActivity : AppCompatActivity() {
 
 @VMState
 data class MainState(
+        @Config(isRetain = true)
         val city: String = "Moscow",
         @Config(isRetain = true)
         val name: String = "Sasha",
-        @Config(isSingle = true)
+        @Config(isSingle = true, isRetain = true)
         val toast: String? = null
 )
 
-class ViewModelFactory(bundle: Bundle?) : ViewModelProvider.Factory {
+class ViewModelFactory(private val bundle: Bundle?) : ViewModelProvider.Factory {
     override fun <T : ViewModel?> create(modelClass: Class<T>): T {
         return when (modelClass) {
-            MainViewModel::class.java -> MainViewModel(MainStateDelegate()) as T
+            MainViewModel::class.java -> MainViewModel(MainStateDelegate(bundle)) as T
             else -> ViewModelProvider.NewInstanceFactory().create(modelClass)
         }
     }

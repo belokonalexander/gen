@@ -61,7 +61,10 @@ class Generator : AbstractProcessor() {
             val propertyType: TypeName
     )
 
-    private fun buildObservableInterface(properties: List<Property>, name: String): TypeSpec.Builder {
+    fun onSaveInstanceStateFunc() = FunSpec.builder("onSaveInstanceState")
+            .addParameter(ParameterSpec.builder("bundle", ClassName("android.os", "Bundle").asNullable()).build())
+
+    private fun buildObservableInterface(properties: List<Property>, name: String, isParcelable: Boolean): TypeSpec.Builder {
         val outInterface = TypeSpec.interfaceBuilder(name)
         properties.forEach { property ->
             val func = FunSpec.builder("${property.name}Changes")
@@ -72,21 +75,55 @@ class Generator : AbstractProcessor() {
             outInterface.addFunction(func)
         }
 
-        outInterface.addFunction(FunSpec.builder("onSaveInstanceState")
-                .addParameter(ParameterSpec.builder("bundle", ClassName("android.os", "Bundle").asNullable()).build())
-                .addModifiers(KModifier.ABSTRACT).build())
-
+        if (isParcelable) {
+            outInterface.addFunction(onSaveInstanceStateFunc().addModifiers(KModifier.ABSTRACT).build())
+        }
         return outInterface
+    }
+
+    private fun buildOutClass(properties: List<Property>, name: String, isParcelable: Boolean): TypeSpec.Builder? {
+        if (!isParcelable) return null
+
+        val constructorBuilder = FunSpec.constructorBuilder()
+        val type = TypeSpec.classBuilder(name)
+        properties.filter { it.isRetain }.forEach {
+            constructorBuilder.addParameter(it.name, it.propertyType)
+            type.addProperty(PropertySpec.builder(it.name, it.propertyType).initializer(it.name).build())
+        }
+        return type
+                .addModifiers(KModifier.DATA)
+                .primaryConstructor(constructorBuilder.build())
+                .addAnnotation(AnnotationSpec.builder(ClassName.bestGuess("kotlinx.android.parcel.Parcelize")).build())
+                .addSuperinterface(ClassName.bestGuess("android.os.Parcelable"))
     }
 
     private fun getEventClassName(isSingle: Boolean): TypeName = ClassName(
             "com.belax.annotation", if (isSingle) "SingleEvent" else "SimpleEvent"
     )
 
-    private fun buildDelegate(element: Element, properties: List<Property>, outInterface: TypeSpec, name: String): TypeSpec {
+    private val writeDir get() = File(processingEnv.options["kapt.kotlin.generated"])
+
+    private fun getInitialStateFun(name: String, defaultProperty: PropertySpec, properties: List<Property>, pStateType: TypeSpec?, key: String?): FunSpec {
+        val default = FunSpec.builder("getInitialState")
+                .addModifiers(KModifier.PRIVATE)
+                .returns(defaultProperty.type)
+        if (pStateType == null) {
+            return default.addCode("return $name()\n").build()
+        }
+        return default
+                .addParameter("bundle", ClassName("android.os", "Bundle").asNullable())
+                .addCode("val bundledValue = bundle?.getParcelable($key) as? ${pStateType.name}\n" +
+                        "return if (bundledValue == null) $name() else $name(\n" +
+                        "${properties.asSequence().filter { it.isRetain }.joinToString(",\n") { "${it.name} = bundledValue.${it.name}" }})\n")
+                .build()
+    }
+
+    private fun buildDelegate(element: Element, properties: List<Property>, outInterface: TypeSpec, name: String, pStateType: TypeSpec?): TypeSpec {
         val defaultName = "default"
+        val defaultiIitializer = "getInitialState(${if (pStateType != null) "bundle" else ""})"
+
         val defaultProperty = PropertySpec.builder("default", ClassName.bestGuess(element.internalName.replace('/', '.')))
-                .initializer("${element.simpleName}()")
+                .initializer(defaultiIitializer)
                 .addModifiers(KModifier.PRIVATE)
                 .build()
 
@@ -114,21 +151,53 @@ class Generator : AbstractProcessor() {
         }
 
         val pushFunc = properties.mapIndexed { index, property ->
-            val param = ParameterSpec.builder("value", property.propertyType)
-                    .build()
+            val param = ParameterSpec.builder("value", property.propertyType).build()
             val eventClassName = getEventClassName(property.isSingle)
             return@mapIndexed FunSpec.builder("push${property.name.capitalize()}")
                     .addParameter(param)
                     .addCode("${subjects[index].name}.onNext(%T(value))\n", eventClassName)
                     .build()
         }
-
-        return TypeSpec.classBuilder(name)
+        val bundleKey = "BUNDLE_KEY"
+        val delegate = TypeSpec.classBuilder(name)
                 .addProperty(defaultProperty)
+                .addFunction(getInitialStateFun(element.simpleName.toString(),defaultProperty, properties, pStateType, bundleKey))
                 .addProperties(subjects)
                 .addFunctions(observables)
                 .addFunctions(pushFunc)
-                .addSuperinterface(ClassName.bestGuess(outInterface.name!!)).build()
+                .addSuperinterface(ClassName.bestGuess(outInterface.name!!))
+
+        if (pStateType != null) {
+
+            val constBundleProperty = PropertySpec.builder(bundleKey, ClassName.bestGuess("kotlin.String"))
+                    .addModifiers(KModifier.PRIVATE, KModifier.CONST)
+                    .initializer("\"${element.simpleName.toString().toUpperCase()}_$bundleKey\"")
+                    .build()
+
+            val companion = TypeSpec.companionObjectBuilder()
+                    .addProperty(constBundleProperty)
+                    .build()
+
+            val bundleType = ClassName("android.os", "Bundle")
+
+            val saveInstanceStateFunc = onSaveInstanceStateFunc()
+                    .addModifiers(KModifier.OVERRIDE)
+                    .addCode("val value = ${pStateType.name}(" +
+                            "${properties.filter { it.isRetain }.joinToString(",\n\t") { "${it.name} = ${it.name}Subject.value!!.get()" }})\n" +
+                            "bundle?.putParcelable($bundleKey, value)\n")
+                    .build()
+
+            val constructor = FunSpec.constructorBuilder()
+                    .addParameter("bundle", bundleType.asNullable())
+                    .build()
+
+            delegate.primaryConstructor(constructor)
+                    .addType(companion)
+                    .addFunction(saveInstanceStateFunc)
+
+        }
+
+        return delegate.build()
     }
 
     override fun process(p0: MutableSet<out TypeElement>, p1: RoundEnvironment): Boolean {
@@ -136,6 +205,7 @@ class Generator : AbstractProcessor() {
             val className = classElement.simpleName
             val outInterfaceFileName = "${className}Client"
             val delegateName = "${className}Delegate"
+            val outClassFileName = "${className}_Parcelable"
 
             val classData = (classElement.kotlinMetadata as KotlinClassMetadata).data
             val proto = classData.proto
@@ -160,17 +230,27 @@ class Generator : AbstractProcessor() {
                 properties.add(Property(name.toString(), observableType, isSingle, isRetain, propertyType))
             }
 
-            val outInterface = buildObservableInterface(properties, outInterfaceFileName).build()
+            val isParcelable: Boolean = properties.any { it.isRetain }
+
+            val outClass = buildOutClass(properties, outClassFileName, isParcelable)?.build()
+
+            val outInterface = buildObservableInterface(properties, outInterfaceFileName, isParcelable).build()
 
             val outInterfaceFile = FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), outInterfaceFileName)
                     .addType(outInterface).build()
-            outInterfaceFile.writeTo(File(processingEnv.options["kapt.kotlin.generated"]))
+            outInterfaceFile.writeTo(writeDir)
 
-            val delegate = buildDelegate(classElement, properties, outInterface, delegateName)
+            outClass?.let {
+                val outClassFile =  FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), outClassFileName)
+                        .addType(it).build()
+                outClassFile.writeTo(writeDir)
+            }
+
+            val delegate = buildDelegate(classElement, properties, outInterface, delegateName, outClass)
 
             val viewModelDelegateFile = FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), delegateName)
                     .addType(delegate).build()
-            viewModelDelegateFile.writeTo(File(processingEnv.options["kapt.kotlin.generated"]))
+            viewModelDelegateFile.writeTo(writeDir)
 
         }
 
