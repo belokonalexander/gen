@@ -12,4 +12,5 @@ import kotlin.Experimental;
 public @interface Config {
     boolean isSingle() default false;
     boolean isRetain() default false;
+    boolean isInput() default false;
 }

@@ -58,6 +58,7 @@ class Generator : AbstractProcessor() {
             val type: TypeName,
             val isSingle: Boolean,
             val isRetain: Boolean,
+            val isInput: Boolean,
             val propertyType: TypeName
     )
 
@@ -79,6 +80,19 @@ class Generator : AbstractProcessor() {
             outInterface.addFunction(onSaveInstanceStateFunc().addModifiers(KModifier.ABSTRACT).build())
         }
         return outInterface
+    }
+
+    private fun buildInputClass(properties: List<Property>, name: String, isInput: Boolean): TypeSpec.Builder? {
+        if (!isInput) return null
+
+        val constructorBuilder = FunSpec.constructorBuilder()
+        val type = TypeSpec.classBuilder(name)
+        properties.filter { it.isInput }.forEach {
+            constructorBuilder.addParameter(it.name, it.propertyType)
+            type.addProperty(PropertySpec.builder(it.name, it.propertyType).initializer(it.name).build())
+        }
+        return type.addModifiers(KModifier.DATA)
+                .primaryConstructor(constructorBuilder.build())
     }
 
     private fun buildOutClass(properties: List<Property>, name: String, isParcelable: Boolean): TypeSpec.Builder? {
@@ -103,24 +117,45 @@ class Generator : AbstractProcessor() {
 
     private val writeDir get() = File(processingEnv.options["kapt.kotlin.generated"])
 
-    private fun getInitialStateFun(name: String, defaultProperty: PropertySpec, properties: List<Property>, pStateType: TypeSpec?, key: String?): FunSpec {
+    private fun getInitialStateFun(name: String, defaultProperty: PropertySpec, properties: List<Property>, pStateType: TypeSpec?, key: String?, input: TypeSpec?): FunSpec {
         val default = FunSpec.builder("getInitialState")
                 .addModifiers(KModifier.PRIVATE)
                 .returns(defaultProperty.type)
-        if (pStateType == null) {
+        if (pStateType == null && input == null) {
             return default.addCode("return $name()\n").build()
         }
+
+        if (pStateType != null) {
+            default.addParameter("bundle", ClassName("android.os", "Bundle").asNullable())
+        }
+        if (input != null) {
+            default.addParameter("input", ClassName.bestGuess(input.name.toString()))
+        }
+
+        val initialCode = "val initial = ${if (input == null) "$name()" else "$name(${properties.filter { it.isInput }.joinToString(",\n\t") { "${it.name} = input.${it.name}" }})"}"
+
+        val bundleCode = if (pStateType != null) {
+            "val bundledValue = bundle?.getParcelable($key) as? ${pStateType.name}\n" +
+                    "return if (bundledValue == null) initial else initial.copy(" +
+                    "${properties.asSequence().filter { it.isRetain }.joinToString(",\n\t") { "${it.name} = bundledValue.${it.name}" }})"
+        } else {
+            "return initial"
+        }
+
+        val code = "$initialCode \n $bundleCode\n"
+
         return default
-                .addParameter("bundle", ClassName("android.os", "Bundle").asNullable())
-                .addCode("val bundledValue = bundle?.getParcelable($key) as? ${pStateType.name}\n" +
-                        "return if (bundledValue == null) $name() else $name(\n" +
-                        "${properties.asSequence().filter { it.isRetain }.joinToString(",\n") { "${it.name} = bundledValue.${it.name}" }})\n")
+                .addCode(code)
                 .build()
     }
 
-    private fun buildDelegate(element: Element, properties: List<Property>, outInterface: TypeSpec, name: String, pStateType: TypeSpec?): TypeSpec {
+    private fun buildDelegate(element: Element, properties: List<Property>, outInterface: TypeSpec, name: String, pStateType: TypeSpec?, inputType: TypeSpec?): TypeSpec {
         val defaultName = "default"
-        val defaultiIitializer = "getInitialState(${if (pStateType != null) "bundle" else ""})"
+        val params = mutableListOf<String>()
+        if (pStateType != null) params.add("bundle")
+        if (inputType != null) params.add("input")
+
+        val defaultiIitializer = "getInitialState(${params.joinToString { it }})"
 
         val defaultProperty = PropertySpec.builder("default", ClassName.bestGuess(element.internalName.replace('/', '.')))
                 .initializer(defaultiIitializer)
@@ -161,11 +196,13 @@ class Generator : AbstractProcessor() {
         val bundleKey = "BUNDLE_KEY"
         val delegate = TypeSpec.classBuilder(name)
                 .addProperty(defaultProperty)
-                .addFunction(getInitialStateFun(element.simpleName.toString(),defaultProperty, properties, pStateType, bundleKey))
+                .addFunction(getInitialStateFun(element.simpleName.toString(),defaultProperty, properties, pStateType, bundleKey, inputType))
                 .addProperties(subjects)
                 .addFunctions(observables)
                 .addFunctions(pushFunc)
                 .addSuperinterface(ClassName.bestGuess(outInterface.name!!))
+
+        val bundleType = ClassName("android.os", "Bundle")
 
         if (pStateType != null) {
 
@@ -178,7 +215,7 @@ class Generator : AbstractProcessor() {
                     .addProperty(constBundleProperty)
                     .build()
 
-            val bundleType = ClassName("android.os", "Bundle")
+
 
             val saveInstanceStateFunc = onSaveInstanceStateFunc()
                     .addModifiers(KModifier.OVERRIDE)
@@ -187,15 +224,19 @@ class Generator : AbstractProcessor() {
                             "bundle?.putParcelable($bundleKey, value)\n")
                     .build()
 
-            val constructor = FunSpec.constructorBuilder()
-                    .addParameter("bundle", bundleType.asNullable())
-                    .build()
-
-            delegate.primaryConstructor(constructor)
-                    .addType(companion)
+            delegate.addType(companion)
                     .addFunction(saveInstanceStateFunc)
 
         }
+
+        val constructor = FunSpec.constructorBuilder()
+        if (pStateType != null)
+            constructor.addParameter("bundle", bundleType.asNullable())
+        if (inputType != null)
+            constructor.addParameter("input", ClassName.bestGuess(inputType.name!!))
+        if (constructor.parameters.size > 0)
+            delegate.primaryConstructor(constructor.build())
+
 
         return delegate.build()
     }
@@ -206,6 +247,7 @@ class Generator : AbstractProcessor() {
             val outInterfaceFileName = "${className}Client"
             val delegateName = "${className}Delegate"
             val outClassFileName = "${className}_Parcelable"
+            val inputClassFileName = "${className}Input"
 
             val classData = (classElement.kotlinMetadata as KotlinClassMetadata).data
             val proto = classData.proto
@@ -226,13 +268,16 @@ class Generator : AbstractProcessor() {
 
                 val isSingle = element.getAnnotation(Config::class.java)?.isSingle == true
                 val isRetain = element.getAnnotation(Config::class.java)?.isRetain == true
+                val isInput = element.getAnnotation(Config::class.java)?.isInput == true
 
-                properties.add(Property(name.toString(), observableType, isSingle, isRetain, propertyType))
+                properties.add(Property(name.toString(), observableType, isSingle, isRetain, isInput, propertyType))
             }
 
             val isParcelable: Boolean = properties.any { it.isRetain }
+            val isInput: Boolean = properties.any { it.isInput }
 
             val outClass = buildOutClass(properties, outClassFileName, isParcelable)?.build()
+            val inputClass = buildInputClass(properties, inputClassFileName, isInput)?.build()
 
             val outInterface = buildObservableInterface(properties, outInterfaceFileName, isParcelable).build()
 
@@ -246,7 +291,13 @@ class Generator : AbstractProcessor() {
                 outClassFile.writeTo(writeDir)
             }
 
-            val delegate = buildDelegate(classElement, properties, outInterface, delegateName, outClass)
+            inputClass?.let {
+                val outClassFile =  FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), inputClassFileName)
+                        .addType(it).build()
+                outClassFile.writeTo(writeDir)
+            }
+
+            val delegate = buildDelegate(classElement, properties, outInterface, delegateName, outClass, inputClass)
 
             val viewModelDelegateFile = FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), delegateName)
                     .addType(delegate).build()

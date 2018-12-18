@@ -44,9 +44,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle?) {
         super.onSaveInstanceState(outState)
-        Log.d("1020", " 1---> ${outState?.toString()}")
         viewModel.onSaveInstanceState(outState)
-        Log.d("1020", " 10 ---> ${outState?.getParcelable("MAINSTATE_BUNDLE_KEY") as? Parcelable}")
     }
 
     override fun onDestroy() {
@@ -59,8 +57,8 @@ class MainActivity : AppCompatActivity() {
 data class MainState(
         @Config(isRetain = true)
         val city: String = "Moscow",
-        @Config(isRetain = true)
-        val name: String = "Sasha",
+        @Config(isInput = true)
+        val name: String,
         @Config(isSingle = true, isRetain = true)
         val toast: String? = null
 )
@@ -68,7 +66,7 @@ data class MainState(
 class ViewModelFactory(private val bundle: Bundle?) : ViewModelProvider.Factory {
     override fun <T : ViewModel?> create(modelClass: Class<T>): T {
         return when (modelClass) {
-            MainViewModel::class.java -> MainViewModel(MainStateDelegate(bundle)) as T
+            MainViewModel::class.java -> MainViewModel(MainStateDelegate(bundle, MainStateInput("Alexander"))) as T
             else -> ViewModelProvider.NewInstanceFactory().create(modelClass)
         }
     }
