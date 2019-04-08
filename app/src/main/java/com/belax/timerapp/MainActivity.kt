@@ -27,7 +27,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        val vmFactory = ViewModelFactory(savedInstanceState)
+        val vmFactory = MainStateFactory(savedInstanceState, MainStateInput("1"))
         Log.d("1020", " 0---> ${savedInstanceState?.toString()}")
         viewModel = ViewModelProviders.of(this, vmFactory).get(MainViewModel::class.java)
 
@@ -53,7 +53,7 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-@VMState
+@VMState(createViewModelFactory = MainViewModel::class)
 data class MainState(
         @Config(isRetain = true)
         val city: String = "Moscow",
@@ -62,15 +62,6 @@ data class MainState(
         @Config(isSingle = true, isRetain = true)
         val toast: String? = null
 )
-
-class ViewModelFactory(private val bundle: Bundle?) : ViewModelProvider.Factory {
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
-        return when (modelClass) {
-            MainViewModel::class.java -> MainViewModel(MainStateDelegate(bundle, MainStateInput("Alexander"))) as T
-            else -> ViewModelProvider.NewInstanceFactory().create(modelClass)
-        }
-    }
-}
 
 class MainViewModel(private val delegate: MainStateDelegate) : ViewModel(), MainStateClient by delegate {
     fun applyName(name: String) {

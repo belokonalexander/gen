@@ -15,12 +15,15 @@ import me.eugeniomarletti.kotlin.metadata.shadow.metadata.deserialization.NameRe
 import me.eugeniomarletti.kotlin.metadata.shadow.name.Name
 import me.eugeniomarletti.kotlin.metadata.shadow.serialization.deserialization.getName
 import java.io.File
+import java.lang.reflect.Type
 import javax.annotation.processing.*
 import javax.lang.model.SourceVersion
 import javax.lang.model.element.Element
 import javax.lang.model.element.ElementKind
 import javax.lang.model.element.TypeElement
+import javax.lang.model.type.MirroredTypeException
 import javax.tools.Diagnostic
+import kotlin.reflect.jvm.jvmName
 
 @AutoService(Processor::class)
 class Generator : AbstractProcessor() {
@@ -80,6 +83,63 @@ class Generator : AbstractProcessor() {
             outInterface.addFunction(onSaveInstanceStateFunc().addModifiers(KModifier.ABSTRACT).build())
         }
         return outInterface
+    }
+
+    private fun buildFactoryClass(
+            name: String,
+            isParcelable: Boolean,
+            inputClass: TypeSpec?,
+            viewModelType: TypeName?,
+            delegateType: TypeName
+    ): TypeSpec.Builder? {
+        if (viewModelType == null) return null
+        val type = TypeSpec.classBuilder(name)
+
+        val constructorBuilder = FunSpec.constructorBuilder()
+
+        if (isParcelable) {
+            val pName = "bundle"
+            val pType = ClassName("android.os", "Bundle").asNullable()
+            constructorBuilder.addParameter(pName, pType)
+            type.addProperty(PropertySpec.builder(pName, pType).addModifiers(KModifier.PRIVATE).initializer(pName).build())
+        }
+
+        if (inputClass != null) {
+            val iName = "input"
+            val iType = ClassName.bestGuess(inputClass.name!!)
+            constructorBuilder.addParameter(iName, iType)
+            type.addProperty(PropertySpec.builder(iName, iType).addModifiers(KModifier.PRIVATE).initializer(iName).build())
+        }
+
+        val vmRootPackage = "androidx.lifecycle"
+
+        val params = listOfNotNull(if (isParcelable) "bundle" else null,
+                if (inputClass != null) "input" else null)
+
+        val annotationSpec = AnnotationSpec.builder(Suppress::class.java)
+                .addMember("%S", "UNCHECKED_CAST").build()
+
+        val createFunc = FunSpec.builder("create")
+                .addModifiers(KModifier.OVERRIDE)
+                .addAnnotation(annotationSpec)
+                .addTypeVariable(TypeVariableName.invoke("T", ClassName.bestGuess("$vmRootPackage.ViewModel").asNullable()))
+                .addParameter(
+                        ParameterSpec.builder("modelClass",
+                                ClassName.bestGuess(Class::class.qualifiedName!!)
+                                        .parameterizedBy(TypeVariableName.invoke("T"))
+                        ).build())
+                .addCode("return %T(%T(${params.joinToString { it }})) as T", viewModelType, delegateType)
+
+
+        // todo andoirdx? :o
+        type
+                .primaryConstructor(constructorBuilder.build())
+                .addSuperinterface(ClassName.bestGuess("$vmRootPackage.ViewModelProvider.Factory"))
+
+                .addFunction(createFunc.build())
+
+
+        return type
     }
 
     private fun buildInputClass(properties: List<Property>, name: String, isInput: Boolean): TypeSpec.Builder? {
@@ -215,8 +275,6 @@ class Generator : AbstractProcessor() {
                     .addProperty(constBundleProperty)
                     .build()
 
-
-
             val saveInstanceStateFunc = onSaveInstanceStateFunc()
                     .addModifiers(KModifier.OVERRIDE)
                     .addCode("val value = ${pStateType.name}(" +
@@ -248,6 +306,7 @@ class Generator : AbstractProcessor() {
             val delegateName = "${className}Delegate"
             val outClassFileName = "${className}_Parcelable"
             val inputClassFileName = "${className}Input"
+            val factoryClassName = "${className}Factory"
 
             val classData = (classElement.kotlinMetadata as KotlinClassMetadata).data
             val proto = classData.proto
@@ -275,6 +334,11 @@ class Generator : AbstractProcessor() {
 
             val isParcelable: Boolean = properties.any { it.isRetain }
             val isInput: Boolean = properties.any { it.isInput }
+            val vmClassType = (try {
+                classElement.getAnnotation(VMState::class.java)?.createViewModelFactory.toString()
+            } catch (e: MirroredTypeException) {
+                e.typeMirror.toString()
+            }).let { ClassName.bestGuess(it) }
 
             val outClass = buildOutClass(properties, outClassFileName, isParcelable)?.build()
             val inputClass = buildInputClass(properties, inputClassFileName, isInput)?.build()
@@ -285,26 +349,21 @@ class Generator : AbstractProcessor() {
                     .addType(outInterface).build()
             outInterfaceFile.writeTo(writeDir)
 
-            outClass?.let {
-                val outClassFile =  FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), outClassFileName)
-                        .addType(it).build()
-                outClassFile.writeTo(writeDir)
-            }
-
-            inputClass?.let {
-                val outClassFile =  FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), inputClassFileName)
-                        .addType(it).build()
-                outClassFile.writeTo(writeDir)
-            }
-
             val delegate = buildDelegate(classElement, properties, outInterface, delegateName, outClass, inputClass)
+            val factoryClass = buildFactoryClass(factoryClassName, isParcelable, inputClass, vmClassType, ClassName.bestGuess(delegate.name!!))?.build()
+
+            listOf(outClass to outClassFileName, inputClass to inputClassFileName, factoryClass to factoryClassName).forEach {
+                it.first?.let { type ->
+                    val outClassFile = FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), it.second)
+                            .addType(type).build()
+                    outClassFile.writeTo(writeDir)
+                }
+            }
 
             val viewModelDelegateFile = FileSpec.builder(processingEnv.elementUtils.getPackageOf(classElement).toString(), delegateName)
                     .addType(delegate).build()
             viewModelDelegateFile.writeTo(writeDir)
-
         }
-
         return false
     }
 

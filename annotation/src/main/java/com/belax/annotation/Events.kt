@@ -17,6 +17,5 @@ class SingleEvent<T>(item: T) : SimpleEvent<T?>(item) {
         alreadyUsed = true
         return super.get()
     }
-
 }
 

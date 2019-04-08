@@ -8,4 +8,7 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.TYPE)
 public @interface VMState {
+    Class createViewModelFactory() default DEFAULT.class;
+
+    static final class DEFAULT {}
 }
