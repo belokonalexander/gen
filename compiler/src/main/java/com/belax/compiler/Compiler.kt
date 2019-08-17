@@ -15,7 +15,6 @@ import me.eugeniomarletti.kotlin.metadata.shadow.metadata.deserialization.NameRe
 import me.eugeniomarletti.kotlin.metadata.shadow.name.Name
 import me.eugeniomarletti.kotlin.metadata.shadow.serialization.deserialization.getName
 import java.io.File
-import java.lang.reflect.Type
 import javax.annotation.processing.*
 import javax.lang.model.SourceVersion
 import javax.lang.model.element.Element
@@ -23,11 +22,9 @@ import javax.lang.model.element.ElementKind
 import javax.lang.model.element.TypeElement
 import javax.lang.model.type.MirroredTypeException
 import javax.tools.Diagnostic
-import kotlin.reflect.jvm.jvmName
 
 @AutoService(Processor::class)
 class Generator : AbstractProcessor() {
-
     private lateinit var messager: Messager
     private lateinit var filer: Filer
 
@@ -65,8 +62,12 @@ class Generator : AbstractProcessor() {
             val propertyType: TypeName
     )
 
-    fun onSaveInstanceStateFunc() = FunSpec.builder("onSaveInstanceState")
-            .addParameter(ParameterSpec.builder("bundle", ClassName("android.os", "Bundle").asNullable()).build())
+    fun onSaveInstanceStateFunc() = FunSpec
+        .builder("onSaveInstanceState")
+        .addParameter(
+            ParameterSpec.builder("bundle", ClassName("android.os", "Bundle")
+                .asNullable()).build()
+        )
 
     private fun buildObservableInterface(properties: List<Property>, name: String, isParcelable: Boolean): TypeSpec.Builder {
         val outInterface = TypeSpec.interfaceBuilder(name)
@@ -130,14 +131,10 @@ class Generator : AbstractProcessor() {
                         ).build())
                 .addCode("return %T(%T(${params.joinToString { it }})) as T", viewModelType, delegateType)
 
-
         // todo andoirdx? :o
-        type
-                .primaryConstructor(constructorBuilder.build())
-                .addSuperinterface(ClassName.bestGuess("$vmRootPackage.ViewModelProvider.Factory"))
-
-                .addFunction(createFunc.build())
-
+        type.primaryConstructor(constructorBuilder.build())
+            .addSuperinterface(ClassName.bestGuess("$vmRootPackage.ViewModelProvider.Factory"))
+            .addFunction(createFunc.build())
 
         return type
     }
@@ -312,8 +309,6 @@ class Generator : AbstractProcessor() {
             val proto = classData.proto
             val nameResolver = classData.nameResolver
             val constr = proto.constructorList.find { it.isPrimary }!!
-
-
             val properties = mutableListOf<Property>()
 
             classElement.enclosedElements.filter { it.kind.isField }.forEachIndexed { index, element ->

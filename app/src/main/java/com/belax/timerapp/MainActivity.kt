@@ -1,19 +1,17 @@
 package com.belax.timerapp
 
 import android.os.Bundle
-import android.os.Parcelable
 import android.util.Log
 import android.widget.Toast
 import android.widget.Toast.LENGTH_SHORT
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelProviders
 import com.belax.annotation.Config
 import com.belax.annotation.VMState
+
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
-import kotlinx.android.parcel.Parcelize
 import kotlinx.android.synthetic.main.activity_main.*
 
 
@@ -59,6 +57,7 @@ data class MainState(
         val city: String = "Moscow",
         @Config(isInput = true)
         val name: String,
+        val other: String = "",
         @Config(isSingle = true, isRetain = true)
         val toast: String? = null
 )
