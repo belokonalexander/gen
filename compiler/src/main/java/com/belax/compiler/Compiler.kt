@@ -333,7 +333,11 @@ class Generator : AbstractProcessor() {
                 classElement.getAnnotation(VMState::class.java)?.createViewModelFactory.toString()
             } catch (e: MirroredTypeException) {
                 e.typeMirror.toString()
-            }).let { ClassName.bestGuess(it) }
+            }).let {
+                ClassName.bestGuess(it).takeUnless {
+                    it == ClassName.bestGuess("com.belax.annotation.VMState.DEFAULT")
+                }
+            }
 
             val outClass = buildOutClass(properties, outClassFileName, isParcelable)?.build()
             val inputClass = buildInputClass(properties, inputClassFileName, isInput)?.build()
